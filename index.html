@@ -8,7 +8,34 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #f5f5f5; min-height: 100vh; }
 @keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-5px)} }
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+.fade-in { animation: fadeIn 0.3s ease; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+
+/* TABS */
+.tab-btn { padding: 8px 16px; border: none; background: transparent; cursor: pointer; font-size: 0.82rem; color: #888; border-bottom: 2px solid transparent; transition: all 0.2s; }
+.tab-btn.active { color: #e8a020; border-bottom-color: #e8a020; font-weight: 600; }
+
+/* CHECKLIST */
+.check-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+.check-item:last-child { border-bottom: none; }
+.check-box { width: 20px; height: 20px; border: 2px solid #ddd; border-radius: 4px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all 0.2s; margin-top: 1px; }
+.check-box.checked { background: #e8a020; border-color: #e8a020; }
+.check-box.checked::after { content: '✓'; color: #fff; font-size: 0.75rem; font-weight: 700; }
+.check-text { font-size: 0.88rem; color: #333; line-height: 1.5; }
+.check-text.done { text-decoration: line-through; color: #aaa; }
+
+/* TIMER */
+.timer-box { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 16px; margin-bottom: 10px; }
+.timer-display { font-size: 2rem; font-weight: 700; color: #111; text-align: center; font-family: monospace; }
+.timer-label { font-size: 0.75rem; color: #888; text-align: center; margin-bottom: 8px; }
+.timer-btn { background: #e8a020; border: none; border-radius: 8px; padding: 8px 16px; font-size: 0.82rem; font-weight: 700; color: #111; cursor: pointer; }
+.timer-btn.stop { background: #cc3333; color: #fff; }
+
+/* SAVED */
+.saved-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 16px; margin-bottom: 10px; cursor: pointer; transition: all 0.2s; }
+.saved-card:hover { border-color: #e8a020; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
 </style>
 </head>
 <body>
@@ -16,52 +43,59 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #f5f5f5; mi
 <script>
 const SYSTEM = `You are CookMaster Pro — a world-class professional culinary AI.
 
-For every recipe request, use this exact structure:
+For every recipe request, use this EXACT structure with these EXACT headers (important for parsing):
 
 🍽️ RECIPE OVERVIEW
 - Dish name, origin, difficulty (Beginner/Intermediate/Advanced)
 - Prep time | Cook time | Total time
 
-👥 INGREDIENTS (scaled for the number of people requested)
-- Every ingredient with EXACT metric (grams/ml) AND imperial (oz/cups) quantities
-- Where to buy each ingredient (supermarket, Asian grocery, butcher, etc.)
+👥 INGREDIENTS
+- Every ingredient with EXACT metric (grams/ml) AND imperial (oz/cups)
+- Where to buy each ingredient (supermarket, Asian grocery, butcher, specialty store)
+- Estimated price per ingredient in AUD (Australian dollars)
+- Total estimated cost for the recipe
+- Budget tips to reduce cost
 - Possible substitutions
 
-📋 STEP BY STEP METHOD
+📋 STEPS
 - Numbered steps, very detailed
-- Exact temperature in Celsius AND Fahrenheit for every step
+- Exact temperature in Celsius AND Fahrenheit
 - Exact timing for every step
-- Visual cues (colour, texture, smell, sound)
-- Chef tips inline
+- Visual cues and chef tips
+
+💰 BUDGET SUMMARY
+- Total estimated cost AUD
+- Cost per serving AUD
+- Budget rating (Budget/Mid-range/Premium)
+- Tips to make it cheaper
 
 🌡️ TEMPERATURE & TIMING SUMMARY
 
 🧊 STORAGE GUIDE
-- Container type, fridge temperature, fridge shelf life (days)
-- Freezer temperature, freezer shelf life (weeks/months)
-- How to reheat with exact temperature and time
+- Container, fridge temp, fridge shelf life (days)
+- Freezer temp, freezer shelf life
+- How to reheat with temp and time
 - Signs food has gone bad
 
 🍱 PORTION GUIDE
 - Exact grams per person: adults, children, elderly, athletes
-- Plating tips
 
 🥗 NUTRITION PER SERVING
-- Calories, Protein, Carbs, Sugar, Fat, Saturated Fat, Fibre, Sodium
+- Calories, Protein, Carbs, Sugar, Fat, Fibre, Sodium
 - Health rating /10
 
 ⚠️ DIETARY & ALLERGENS
-- Suitable for: list applicable diets
-- Allergens present
-- How to modify for dietary needs
 
-❌ TOP MISTAKES TO AVOID
-- 3-5 common mistakes
-
-Always be thorough. A complete beginner must be able to follow perfectly.`;
+❌ TOP MISTAKES TO AVOID`;
 
 let messages = [];
 let apiKey = '';
+let savedRecipes = JSON.parse(localStorage.getItem('cm_saved') || '[]');
+let timers = {};
+
+function saveFavourites() {
+  localStorage.setItem('cm_saved', JSON.stringify(savedRecipes));
+}
 
 function el(tag, props, ...children) {
   const e = document.createElement(tag);
@@ -71,10 +105,23 @@ function el(tag, props, ...children) {
     else if (k === 'onKeydown') e.addEventListener('keydown', v);
     else if (k === 'onFocus') e.addEventListener('focus', v);
     else if (k === 'onBlur') e.addEventListener('blur', v);
+    else if (k === 'onChange') e.addEventListener('change', v);
     else e[k] = v;
   });
   children.flat().forEach(c => c && e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
   return e;
+}
+
+function parseIngredients(text) {
+  const section = text.match(/👥 INGREDIENTS([\s\S]*?)(?=📋|🌡️|🧊|🍱|🥗|⚠️|❌|$)/);
+  if (!section) return [];
+  return section[1].split('\n').filter(l => l.trim().startsWith('-')).map(l => l.replace(/^-\s*/, '').trim()).filter(Boolean);
+}
+
+function parseSteps(text) {
+  const section = text.match(/📋 STEPS([\s\S]*?)(?=🌡️|🧊|🍱|🥗|⚠️|❌|$)/);
+  if (!section) return [];
+  return section[1].split('\n').filter(l => /^\d+\./.test(l.trim())).map(l => l.trim()).filter(Boolean);
 }
 
 function showApiScreen() {
@@ -85,30 +132,21 @@ function showApiScreen() {
     onFocus: e => e.target.style.borderColor='#e8a020',
     onBlur: e => e.target.style.borderColor='#333'
   });
-
   const btn = el('button', {
     style: { width:'100%', background:'#e8a020', border:'none', borderRadius:'10px', padding:'14px', fontSize:'0.95rem', fontWeight:'700', color:'#111', cursor:'pointer' },
-    onClick: () => {
-      if (!input.value.trim()) return;
-      apiKey = input.value.trim();
-      localStorage.setItem('cm_key', apiKey);
-      showMainApp();
-    }
+    onClick: () => { if (!input.value.trim()) return; apiKey = input.value.trim(); localStorage.setItem('cm_key', apiKey); showMainApp(); }
   }, 'Start Cooking →');
-
   input.addEventListener('keydown', e => { if (e.key === 'Enter') btn.click(); });
-
   const screen = el('div', { style: { minHeight:'100vh', background:'#111', display:'flex', alignItems:'center', justifyContent:'center', padding:'24px' }},
     el('div', { style: { background:'#1a1a1a', border:'1px solid #333', borderRadius:'16px', padding:'48px 40px', maxWidth:'480px', width:'100%', textAlign:'center' }},
-      el('div', { style: { width:'56px', height:'56px', background:'#e8a020', borderRadius:'12px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'1.6rem', margin:'0 auto 20px', lineHeight:'56px', textAlign:'center' }}, '🍳'),
+      el('div', { style: { width:'56px', height:'56px', background:'#e8a020', borderRadius:'12px', fontSize:'1.6rem', margin:'0 auto 20px', lineHeight:'56px', textAlign:'center' }}, '🍳'),
       el('h1', { style: { color:'#fff', fontSize:'1.6rem', fontWeight:'300', marginBottom:'8px' }}, 'CookMaster Pro'),
       el('p', { style: { color:'#888', fontSize:'0.9rem', lineHeight:'1.7', marginBottom:'16px' }}, 'Enter your Anthropic API key to get started.'),
       el('div', { style: { background:'#111', border:'1px solid #333', borderRadius:'10px', padding:'16px', marginBottom:'20px', textAlign:'left' }},
         el('p', { style: { color:'#e8a020', fontSize:'0.78rem', fontWeight:'700', marginBottom:'8px' }}, 'Get your free key:'),
-        el('p', { style: { color:'#888', fontSize:'0.78rem', lineHeight:'1.9' }}, '1. Go to console.anthropic.com\n2. Sign in with Google\n3. Click Get API Key → Create Key\n4. Add $5 credit minimum\n5. Copy and paste below')
+        el('p', { style: { color:'#888', fontSize:'0.78rem', lineHeight:'1.9', whiteSpace:'pre-line' }}, '1. Go to console.anthropic.com\n2. Sign in with Google\n3. Click Get API Key → Create Key\n4. Add $5 credit minimum\n5. Copy and paste below')
       ),
-      input,
-      btn,
+      input, btn,
       el('p', { style: { color:'#555', fontSize:'0.72rem', marginTop:'16px' }}, 'Key saved on your device only.')
     )
   );
@@ -118,75 +156,100 @@ function showApiScreen() {
 
 function showMainApp() {
   document.getElementById('app').innerHTML = '';
-
-  let servings = 4;
-  let diet = 'None';
-  let cuisine = 'All';
-  let started = false;
+  let servings = 4, diet = 'None', cuisine = 'All', currency = 'AUD - Australia', started = false;
+  let currentRecipeText = '', currentTab = 'chat';
+  let shoppingChecked = {}, stepsChecked = {};
 
   const diets = ['None','Vegetarian','Vegan','Gluten-Free','Keto','Halal','Diabetic'];
+  const currencies = ['AUD - Australia','USD - United States','GBP - United Kingdom','EUR - Europe','INR - India','MUR - Mauritius','NZD - New Zealand','SGD - Singapore','CAD - Canada','AED - UAE','ZAR - South Africa'];
   const cuisines = ['All','Italian','Indian','Mauritian','Japanese','French','Chinese','Middle Eastern','Thai','Mexican','American','African'];
   const suggestions = ['Mauritian Fish Curry','Beef Wellington','Chicken Biryani','French Croissants','Japanese Ramen','Moroccan Tagine','Thai Green Curry','Neapolitan Pizza'];
 
   // HEADER
   const header = el('div', { style: { background:'#111', padding:'0 24px', display:'flex', alignItems:'center', height:'60px', gap:'16px', flexShrink:'0' }},
-    el('div', { style: { width:'34px', height:'34px', background:'#e8a020', borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'1.1rem', lineHeight:'34px', textAlign:'center' }}, '🍳'),
+    el('div', { style: { width:'34px', height:'34px', background:'#e8a020', borderRadius:'8px', fontSize:'1.1rem', lineHeight:'34px', textAlign:'center' }}, '🍳'),
     el('span', { style: { color:'#fff', fontWeight:'700', fontSize:'1.1rem' }}, 'CookMaster Pro'),
-    el('div', { style: { marginLeft:'auto', display:'flex', gap:'16px' }},
-      ...['World Cuisines','Nutrition','Storage','Portions'].map(t => el('span', { style: { color:'#666', fontSize:'0.78rem' }}, t))
+    el('div', { style: { marginLeft:'auto', display:'flex', gap:'8px' }},
+      el('button', {
+        style: { background:'rgba(232,160,32,0.15)', border:'1px solid rgba(232,160,32,0.3)', borderRadius:'6px', padding:'6px 12px', fontSize:'0.75rem', color:'#e8a020', cursor:'pointer' },
+        onClick: () => { apiKey = ''; localStorage.removeItem('cm_key'); showApiScreen(); }
+      }, '⚙️ Change Key')
     )
   );
 
-  // SERVINGS CONTROL
+  // TABS
+  const tabsBar = el('div', { style: { background:'#fff', borderBottom:'1px solid #e0e0e0', display:'flex', padding:'0 24px' }});
+  const tabs = [
+    { id:'chat', label:'🍳 Chat' },
+    { id:'shopping', label:'🛒 Shopping List' },
+    { id:'steps', label:'📋 Cooking Steps' },
+    { id:'timers', label:'⏱️ Timers' },
+    { id:'saved', label:'❤️ Saved Recipes' },
+  ];
+
+  function switchTab(id) {
+    currentTab = id;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.tab-btn[data-tab="${id}"]`).classList.add('active');
+    [chatPanel, shoppingPanel, stepsPanel, timersPanel, savedPanel].forEach(p => p.style.display = 'none');
+    if (id === 'chat') chatPanel.style.display = 'flex';
+    if (id === 'shopping') { shoppingPanel.style.display = 'block'; renderShopping(); }
+    if (id === 'steps') { stepsPanel.style.display = 'block'; renderSteps(); }
+    if (id === 'timers') { timersPanel.style.display = 'block'; renderTimers(); }
+    if (id === 'saved') { savedPanel.style.display = 'block'; renderSaved(); }
+  }
+
+  tabs.forEach(t => {
+    const btn = el('button', { className:'tab-btn', onClick: () => switchTab(t.id) }, t.label);
+    btn.dataset.tab = t.id;
+    if (t.id === 'chat') btn.classList.add('active');
+    tabsBar.appendChild(btn);
+  });
+
+  // CONTROLS
   const servingsNum = el('span', { style: { fontWeight:'700', minWidth:'20px', textAlign:'center', display:'inline-block' }}, '4');
-  const minusBtn = el('button', { style: { background:'none', border:'none', cursor:'pointer', fontSize:'1rem', fontWeight:'700', width:'22px' }, onClick: () => { servings = Math.max(1, servings-1); servingsNum.textContent = servings; }}, '−');
-  const plusBtn = el('button', { style: { background:'none', border:'none', cursor:'pointer', fontSize:'1rem', fontWeight:'700', width:'22px' }, onClick: () => { servings = Math.min(50, servings+1); servingsNum.textContent = servings; }}, '+');
-
-  const dietSel = el('select', { style: { background:'#fff', border:'1px solid #ddd', borderRadius:'8px', padding:'8px 12px', fontSize:'0.82rem', color:'#111', cursor:'pointer', outline:'none' }});
+  const dietSel = el('select', { style: { background:'#fff', border:'1px solid #ddd', borderRadius:'8px', padding:'6px 10px', fontSize:'0.82rem', color:'#111', cursor:'pointer', outline:'none' }, onChange: e => diet = e.target.value });
   diets.forEach(d => dietSel.appendChild(el('option', { value:d }, d)));
-  dietSel.addEventListener('change', e => diet = e.target.value);
-
-  const cuisineSel = el('select', { style: { background:'#fff', border:'1px solid #ddd', borderRadius:'8px', padding:'8px 12px', fontSize:'0.82rem', color:'#111', cursor:'pointer', outline:'none' }});
+  const cuisineSel = el('select', { style: { background:'#fff', border:'1px solid #ddd', borderRadius:'8px', padding:'6px 10px', fontSize:'0.82rem', color:'#111', cursor:'pointer', outline:'none' }, onChange: e => cuisine = e.target.value });
+  const currencySel = el('select', { style: { background:'#fff', border:'1px solid #ddd', borderRadius:'8px', padding:'6px 10px', fontSize:'0.82rem', color:'#111', cursor:'pointer', outline:'none' }, onChange: e => currency = e.target.value });
+  currencies.forEach(c => currencySel.appendChild(el('option', { value:c }, c)));
   cuisines.forEach(c => cuisineSel.appendChild(el('option', { value:c }, c)));
-  cuisineSel.addEventListener('change', e => cuisine = e.target.value);
 
-  const controls = el('div', { style: { background:'#fff', borderBottom:'1px solid #e0e0e0', padding:'10px 24px', display:'flex', gap:'14px', alignItems:'center', flexWrap:'wrap' }},
-    el('span', { style: { fontSize:'0.75rem', color:'#555', fontWeight:'600', textTransform:'uppercase', letterSpacing:'0.08em' }}, 'Servings'),
-    el('div', { style: { display:'flex', alignItems:'center', gap:'6px', background:'#f5f5f5', borderRadius:'8px', padding:'4px 8px', border:'1px solid #ddd' }}, minusBtn, servingsNum, plusBtn),
-    el('span', { style: { fontSize:'0.73rem', color:'#888' }}, 'people'),
-    el('div', { style: { width:'1px', height:'24px', background:'#e0e0e0' }}),
-    el('span', { style: { fontSize:'0.75rem', color:'#555', fontWeight:'600', textTransform:'uppercase', letterSpacing:'0.08em' }}, 'Diet'),
-    dietSel,
-    el('div', { style: { width:'1px', height:'24px', background:'#e0e0e0' }}),
-    el('span', { style: { fontSize:'0.75rem', color:'#555', fontWeight:'600', textTransform:'uppercase', letterSpacing:'0.08em' }}, 'Cuisine'),
-    cuisineSel
+  const controls = el('div', { style: { background:'#fafafa', borderBottom:'1px solid #e0e0e0', padding:'8px 24px', display:'flex', gap:'12px', alignItems:'center', flexWrap:'wrap' }},
+    el('span', { style: { fontSize:'0.72rem', color:'#555', fontWeight:'600', textTransform:'uppercase' }}, 'Servings'),
+    el('div', { style: { display:'flex', alignItems:'center', gap:'6px', background:'#fff', borderRadius:'8px', padding:'3px 8px', border:'1px solid #ddd' }},
+      el('button', { style: { background:'none', border:'none', cursor:'pointer', fontSize:'1rem', fontWeight:'700', width:'20px' }, onClick: () => { servings = Math.max(1,servings-1); servingsNum.textContent=servings; }}, '−'),
+      servingsNum,
+      el('button', { style: { background:'none', border:'none', cursor:'pointer', fontSize:'1rem', fontWeight:'700', width:'20px' }, onClick: () => { servings = Math.min(50,servings+1); servingsNum.textContent=servings; }}, '+')
+    ),
+    el('span', { style: { fontSize:'0.72rem', color:'#888' }}, 'people'),
+    el('span', { style: { color:'#ddd' }}, '|'),
+    el('span', { style: { fontSize:'0.72rem', color:'#555', fontWeight:'600', textTransform:'uppercase' }}, 'Diet'), dietSel,
+    el('span', { style: { color:'#ddd' }}, '|'),
+    el('span', { style: { fontSize:'0.72rem', color:'#555', fontWeight:'600', textTransform:'uppercase' }}, 'Cuisine'), cuisineSel
   );
 
-  // CHAT AREA
-  const chatArea = el('div', { style: { flex:'1', overflowY:'auto', padding:'24px 0', display:'none' }});
-
-  // LANDING
-  const landing = el('div', { style: { padding:'36px 0' }},
-    el('div', { style: { background:'#111', borderRadius:'16px', padding:'36px', marginBottom:'24px' }},
-      el('div', { style: { fontSize:'0.7rem', color:'#e8a020', letterSpacing:'0.25em', textTransform:'uppercase', marginBottom:'10px' }}, 'Professional Culinary AI'),
-      el('h1', { style: { color:'#fff', fontSize:'2rem', fontWeight:'300', marginBottom:'10px', lineHeight:'1.2' }}, 'Master Any Recipe. Cook With Precision.'),
-      el('p', { style: { color:'#aaa', fontSize:'0.9rem', lineHeight:'1.7', marginBottom:'24px' }}, 'Exact temperatures, timings, portions scaled to your guests, full nutrition, storage guides.')
+  // CHAT PANEL
+  const chatArea = el('div', { style: { flex:'1', overflowY:'auto', padding:'24px 0' }});
+  const landing = el('div', { style: { padding:'24px 0' }},
+    el('div', { style: { background:'#111', borderRadius:'16px', padding:'32px', marginBottom:'20px' }},
+      el('div', { style: { fontSize:'0.7rem', color:'#e8a020', letterSpacing:'0.25em', textTransform:'uppercase', marginBottom:'8px' }}, 'Professional Culinary AI'),
+      el('h1', { style: { color:'#fff', fontSize:'1.8rem', fontWeight:'300', marginBottom:'8px', lineHeight:'1.2' }}, 'Master Any Recipe.\nCook With Precision.'),
+      el('p', { style: { color:'#aaa', fontSize:'0.88rem', lineHeight:'1.7', marginBottom:'20px' }}, 'Exact temperatures, timings, portions, nutrition, storage guides and shopping checklists.')
     ),
-    el('p', { style: { fontSize:'0.7rem', color:'#888', letterSpacing:'0.15em', textTransform:'uppercase', marginBottom:'12px', fontWeight:'600' }}, 'Popular Recipes'),
-    el('div', { style: { display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(175px,1fr))', gap:'10px' }},
+    el('p', { style: { fontSize:'0.7rem', color:'#888', letterSpacing:'0.15em', textTransform:'uppercase', marginBottom:'10px', fontWeight:'600' }}, 'Popular Recipes'),
+    el('div', { style: { display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:'8px' }},
       ...suggestions.map(s => {
-        const btn = el('button', {
-          style: { background:'#fff', border:'1px solid #e0e0e0', borderRadius:'10px', padding:'14px 16px', textAlign:'left', cursor:'pointer', display:'block', width:'100%', fontSize:'0.83rem', color:'#111', fontWeight:'500' }
-        }, s);
-        btn.addEventListener('click', () => sendMsg(`How do I cook ${s}? Full detailed recipe please.`));
-        btn.addEventListener('mouseenter', () => { btn.style.borderColor='#e8a020'; });
-        btn.addEventListener('mouseleave', () => { btn.style.borderColor='#e0e0e0'; });
+        const btn = el('button', { style: { background:'#fff', border:'1px solid #e0e0e0', borderRadius:'10px', padding:'12px', textAlign:'left', cursor:'pointer', width:'100%', fontSize:'0.82rem', color:'#111', fontWeight:'500', transition:'all 0.2s' }}, s);
+        btn.addEventListener('click', () => sendMsg(`How do I cook ${s}?`));
+        btn.addEventListener('mouseenter', () => btn.style.borderColor='#e8a020');
+        btn.addEventListener('mouseleave', () => btn.style.borderColor='#e0e0e0');
         return btn;
       })
     )
   );
+  chatArea.appendChild(landing);
 
-  // INPUT
   const textarea = el('textarea', {
     placeholder: 'Ask for any recipe...',
     rows: 2,
@@ -195,95 +258,318 @@ function showMainApp() {
     onBlur: e => e.target.style.borderColor='#ddd'
   });
 
-  const sendBtn = el('button', {
-    style: { background:'#e8a020', border:'none', borderRadius:'10px', width:'48px', height:'48px', fontSize:'1.1rem', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:'0' }
-  }, '➤');
+  const sendBtn = el('button', { style: { background:'#e8a020', border:'none', borderRadius:'10px', width:'48px', height:'48px', fontSize:'1.1rem', cursor:'pointer', flexShrink:'0' }}, '➤');
+  textarea.addEventListener('keydown', e => { if (e.key==='Enter'&&!e.shiftKey) { e.preventDefault(); sendBtn.click(); }});
 
-  textarea.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }});
+  const saveRecipeBtn = el('button', {
+    style: { background:'transparent', border:'1px solid #e8a020', borderRadius:'8px', padding:'6px 14px', fontSize:'0.78rem', color:'#e8a020', cursor:'pointer', display:'none' },
+    onClick: () => {
+      if (!currentRecipeText) return;
+      const title = currentRecipeText.split('\n')[0].replace(/[🍽️*]/g,'').trim() || 'Recipe';
+      savedRecipes.unshift({ title, text: currentRecipeText, date: new Date().toLocaleDateString() });
+      saveFavourites();
+      saveRecipeBtn.textContent = '❤️ Saved!';
+      setTimeout(() => saveRecipeBtn.textContent = '❤️ Save Recipe', 2000);
+    }
+  }, '❤️ Save Recipe');
 
-  const inputArea = el('div', { style: { padding:'14px 0 20px', borderTop:'1px solid #e0e0e0' }},
+  const inputArea = el('div', { style: { padding:'12px 0 16px', borderTop:'1px solid #e0e0e0' }},
+    el('div', { style: { display:'flex', gap:'8px', marginBottom:'8px' }},
+      ...['Scale for more people','Storage tips','Healthier version?','Substitutions?','Show nutrition'].map(q => {
+        const b = el('button', { style: { background:'#fff', border:'1px solid #ddd', borderRadius:'16px', padding:'4px 10px', fontSize:'0.72rem', color:'#333', cursor:'pointer' }}, q);
+        b.addEventListener('click', () => sendMsg(q));
+        return b;
+      }),
+      saveRecipeBtn
+    ),
     el('div', { style: { display:'flex', gap:'10px', alignItems:'flex-end' }}, textarea, sendBtn)
   );
 
-  const main = el('div', { style: { flex:'1', display:'flex', flexDirection:'column', maxWidth:'900px', margin:'0 auto', width:'100%', padding:'0 16px' }}, landing, chatArea, inputArea);
+  const chatPanel = el('div', { style: { flex:'1', display:'flex', flexDirection:'column', overflow:'hidden' }}, chatArea, inputArea);
 
-  const app = el('div', { style: { minHeight:'100vh', background:'#f5f5f5', display:'flex', flexDirection:'column' }}, header, controls, main);
+  // SHOPPING PANEL
+  const shoppingPanel = el('div', { style: { display:'none', padding:'20px 0', overflowY:'auto', flex:'1' }});
+  function renderShopping() {
+    shoppingPanel.innerHTML = '';
+    const ingredients = currentRecipeText ? parseIngredients(currentRecipeText) : [];
+    if (!ingredients.length) {
+      shoppingPanel.appendChild(el('div', { style: { textAlign:'center', color:'#888', padding:'40px', fontSize:'0.9rem' }}, '🛒 Ask for a recipe first to generate your shopping list!'));
+      return;
+    }
+
+    const supermarkets = [
+      { name:'Woolworths', flag:'🇦🇺', url:'https://www.woolworths.com.au/shop/search/products?searchTerm=' },
+      { name:'Coles', flag:'🇦🇺', url:'https://www.coles.com.au/search?q=' },
+      { name:'Amazon Fresh', flag:'🇺🇸', url:'https://www.amazon.com/s?k=' },
+      { name:'Walmart', flag:'🇺🇸', url:'https://www.walmart.com/search?q=' },
+      { name:'Tesco', flag:'🇬🇧', url:'https://www.tesco.com/groceries/en-GB/search?query=' },
+      { name:'Carrefour FR', flag:'🇫🇷', url:'https://www.carrefour.fr/s?q=' },
+      { name:'Mercadona', flag:'🇪🇸', url:'https://www.mercadona.es/search?query=' },
+      { name:'BigBasket', flag:'🇮🇳', url:'https://www.bigbasket.com/ps/?q=' },
+      { name:'JioMart', flag:'🇮🇳', url:'https://www.jiomart.com/search/' },
+      { name:'Lulu UAE', flag:'🇦🇪', url:'https://www.luluhypermarket.com/en-ae/search?text=' },
+      { name:'Carrefour UAE', flag:'🇦🇪', url:'https://www.carrefouruae.com/mafuae/en/v2/search?Ntt=' },
+      { name:'Shoprite', flag:'🇿🇦', url:'https://www.shoprite.co.za/SearchDisplay?searchTerm=' },
+      { name:'Pick n Pay', flag:'🇿🇦', url:'https://www.pnp.co.za/pnpstorefront/pnp/en/search?q=' },
+      { name:'Winners MU', flag:'🇲🇺', url:'https://www.winners.mu/search?q=' },
+      { name:'Super U MU', flag:'🇲🇺', url:'https://www.superu.mu/search?q=' },
+      { name:'Intermarche', flag:'🇫🇷', url:'https://drive.intermarche.com/recherche?query=' },
+    ];
+
+    let activeIngredient = '';
+    const selectedIng = el('div', { style:{ background:'#f5f5f5', borderRadius:'8px', padding:'8px 12px', fontSize:'0.82rem', color:'#888', marginBottom:'10px' }}, 'Tap an ingredient below then pick your store');
+    const storeGrid = el('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(125px,1fr))', gap:'6px', marginTop:'8px' }});
+    supermarkets.forEach(sm => {
+      const btn = el('button', {
+        style:{ background:'#f9f9f9', border:'1px solid #e0e0e0', borderRadius:'8px', padding:'6px 8px', fontSize:'0.7rem', color:'#333', cursor:'pointer', textAlign:'left', transition:'all 0.2s' },
+        onClick: () => {
+          if (!activeIngredient) { selectedIng.textContent = 'Tap an ingredient first!'; return; }
+          const query = encodeURIComponent(activeIngredient.split('(')[0].trim());
+          window.open(sm.url + query, '_blank');
+        }
+      }, sm.flag + ' ' + sm.name);
+      btn.addEventListener('mouseenter', () => { btn.style.borderColor='#e8a020'; btn.style.background='#fff'; });
+      btn.addEventListener('mouseleave', () => { btn.style.borderColor='#e0e0e0'; btn.style.background='#f9f9f9'; });
+      storeGrid.appendChild(btn);
+    });
+
+    const smSection = el('div', { style:{ marginBottom:'16px', background:'#fff', border:'1px solid #e0e0e0', borderRadius:'10px', padding:'14px' }},
+      el('p', { style:{ fontSize:'0.75rem', color:'#555', fontWeight:'600', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:'8px' }}, '🌍 Shop Online — Tap ingredient then choose store'),
+      selectedIng, storeGrid
+    );
+    shoppingPanel.appendChild(smSection);
+
+    const progress = el('div', { style: { background:'#f0f0f0', borderRadius:'8px', height:'8px', marginBottom:'12px', overflow:'hidden' }},
+      el('div', { id:'shop-progress', style: { height:'100%', background:'#e8a020', borderRadius:'8px', transition:'width 0.3s', width: Object.values(shoppingChecked).filter(Boolean).length / ingredients.length * 100 + '%' }})
+    );
+    const printBtn = el('button', {
+      style: { background:'#111', border:'none', borderRadius:'8px', padding:'8px 16px', fontSize:'0.78rem', color:'#fff', cursor:'pointer', marginBottom:'12px' },
+      onClick: () => {
+        const w = window.open('', '_blank');
+        w.document.write('<html><body><h2>Shopping List</h2><ul>' + ingredients.map(i => '<li>' + i + '</li>').join('') + '</ul></body></html>');
+        w.print();
+      }
+    }, '🖨️ Print List');
+    const clearBtn = el('button', {
+      style: { background:'transparent', border:'1px solid #ddd', borderRadius:'8px', padding:'8px 16px', fontSize:'0.78rem', color:'#888', cursor:'pointer', marginBottom:'12px', marginLeft:'8px' },
+      onClick: () => { shoppingChecked = {}; renderShopping(); }
+    }, 'Clear All');
+
+    const list = el('div');
+    ingredients.forEach((ing, i) => {
+      const box = el('div', { className: 'check-box' + (shoppingChecked[i] ? ' checked' : '') });
+      const text = el('span', { className: 'check-text' + (shoppingChecked[i] ? ' done' : '') }, ing);
+      const shopBtn = el('button', {
+        style:{ background:'transparent', border:'1px solid #e8a020', borderRadius:'6px', padding:'2px 8px', fontSize:'0.68rem', color:'#e8a020', cursor:'pointer', marginLeft:'auto', flexShrink:'0', whiteSpace:'nowrap' },
+        onClick: (e) => {
+          e.stopPropagation();
+          activeIngredient = ing;
+          selectedIng.textContent = '🔍 Ready to shop: ' + ing.split('(')[0].trim();
+          selectedIng.style.color = '#e8a020';
+          selectedIng.style.background = 'rgba(232,160,32,0.1)';
+          smSection.scrollIntoView({ behavior:'smooth', block:'nearest' });
+        }
+      }, '🛒 Shop');
+      const item = el('div', { className: 'check-item', style:{ alignItems:'center' }, onClick: () => {
+        shoppingChecked[i] = !shoppingChecked[i];
+        box.className = 'check-box' + (shoppingChecked[i] ? ' checked' : '');
+        text.className = 'check-text' + (shoppingChecked[i] ? ' done' : '');
+        const pct = Object.values(shoppingChecked).filter(Boolean).length / ingredients.length * 100;
+        document.getElementById('shop-progress').style.width = pct + '%';
+      }}, box, text, shopBtn);
+      list.appendChild(item);
+    });
+    shoppingPanel.appendChild(progress);
+    shoppingPanel.appendChild(el('div', { style:{ display:'flex' }}, printBtn, clearBtn));
+    shoppingPanel.appendChild(list);
+  }
+
+  // STEPS PANEL
+  const stepsPanel = el('div', { style: { display:'none', padding:'20px 0', overflowY:'auto', flex:'1' }});
+  function renderSteps() {
+    stepsPanel.innerHTML = '';
+    const steps = currentRecipeText ? parseSteps(currentRecipeText) : [];
+    if (!steps.length) {
+      stepsPanel.appendChild(el('div', { style: { textAlign:'center', color:'#888', padding:'40px', fontSize:'0.9rem' }}, '📋 Ask for a recipe first to see cooking steps!'));
+      return;
+    }
+    const progress = el('div', { style: { background:'#f0f0f0', borderRadius:'8px', height:'8px', marginBottom:'16px', overflow:'hidden' }},
+      el('div', { id:'steps-progress', style: { height:'100%', background:'#e8a020', borderRadius:'8px', transition:'width 0.3s', width: Object.values(stepsChecked).filter(Boolean).length / steps.length * 100 + '%' }})
+    );
+    const clearBtn = el('button', {
+      style: { background:'transparent', border:'1px solid #ddd', borderRadius:'8px', padding:'8px 16px', fontSize:'0.78rem', color:'#888', cursor:'pointer', marginBottom:'16px' },
+      onClick: () => { stepsChecked = {}; renderSteps(); }
+    }, 'Reset Steps');
+
+    const list = el('div');
+    steps.forEach((step, i) => {
+      const box = el('div', { className: 'check-box' + (stepsChecked[i] ? ' checked' : '') });
+      const text = el('span', { className: 'check-text' + (stepsChecked[i] ? ' done' : '') }, step);
+      const item = el('div', { className: 'check-item', onClick: () => {
+        stepsChecked[i] = !stepsChecked[i];
+        box.className = 'check-box' + (stepsChecked[i] ? ' checked' : '');
+        text.className = 'check-text' + (stepsChecked[i] ? ' done' : '');
+        const pct = Object.values(stepsChecked).filter(Boolean).length / steps.length * 100;
+        document.getElementById('steps-progress').style.width = pct + '%';
+      }}, box, text);
+      list.appendChild(item);
+    });
+    stepsPanel.appendChild(progress);
+    stepsPanel.appendChild(clearBtn);
+    stepsPanel.appendChild(list);
+  }
+
+  // TIMERS PANEL
+  const timersPanel = el('div', { style: { display:'none', padding:'20px 0', overflowY:'auto', flex:'1' }});
+  function renderTimers() {
+    timersPanel.innerHTML = '';
+    timersPanel.appendChild(el('p', { style: { fontSize:'0.8rem', color:'#888', marginBottom:'16px' }}, 'Set custom cooking timers:'));
+    const presets = [
+      { label:'Boil water', mins:10 },
+      { label:'Simmer sauce', mins:20 },
+      { label:'Roast chicken', mins:90 },
+      { label:'Bake bread', mins:45 },
+      { label:'Rest meat', mins:10 },
+      { label:'Marinate', mins:30 },
+    ];
+    presets.forEach(p => {
+      let secs = p.mins * 60;
+      let interval = null;
+      const display = el('div', { className:'timer-display' }, formatTime(secs));
+      const label = el('div', { className:'timer-label' }, p.label);
+      let startStopBtn;
+      const resetBtn = el('button', { className:'timer-btn', style:{background:'#ddd',color:'#333',marginLeft:'8px'}, onClick: () => {
+        clearInterval(interval); interval=null; secs=p.mins*60; display.textContent=formatTime(secs); startStopBtn.textContent='▶ Start'; startStopBtn.className='timer-btn';
+      }}, '↺ Reset');
+      startStopBtn = el('button', { className:'timer-btn', onClick: () => {
+        if (interval) { clearInterval(interval); interval=null; startStopBtn.textContent='▶ Start'; startStopBtn.className='timer-btn'; }
+        else {
+          startStopBtn.textContent='⏸ Pause'; startStopBtn.className='timer-btn stop';
+          interval = setInterval(() => {
+            secs--;
+            display.textContent = formatTime(secs);
+            if (secs <= 0) { clearInterval(interval); interval=null; display.textContent='Done!'; startStopBtn.textContent='▶ Start'; startStopBtn.className='timer-btn'; alert(`⏱️ ${p.label} timer done!`); }
+          }, 1000);
+        }
+      }}, '▶ Start');
+      timersPanel.appendChild(el('div', { className:'timer-box' }, label, display, el('div', { style:{display:'flex',justifyContent:'center',gap:'0',marginTop:'10px'}}, startStopBtn, resetBtn)));
+    });
+
+    // Custom timer
+    timersPanel.appendChild(el('div', { style:{marginTop:'16px', background:'#fff', border:'1px solid #e0e0e0', borderRadius:'10px', padding:'16px'} },
+      el('p', { style:{fontSize:'0.8rem', color:'#555', fontWeight:'600', marginBottom:'10px'}}, 'Custom Timer'),
+      el('div', { style:{display:'flex', gap:'8px', alignItems:'center'}},
+        el('input', { type:'number', placeholder:'Minutes', min:1, max:999, style:{width:'100px', border:'1px solid #ddd', borderRadius:'8px', padding:'8px', fontSize:'0.88rem', outline:'none'}, id:'custom-mins'}),
+        el('input', { type:'text', placeholder:'Label', style:{flex:'1', border:'1px solid #ddd', borderRadius:'8px', padding:'8px', fontSize:'0.88rem', outline:'none'}, id:'custom-label'}),
+        el('button', { style:{background:'#e8a020', border:'none', borderRadius:'8px', padding:'8px 14px', fontSize:'0.82rem', fontWeight:'700', color:'#111', cursor:'pointer'}, onClick: () => {
+          const mins = parseInt(document.getElementById('custom-mins').value) || 5;
+          const lbl = document.getElementById('custom-label').value || 'Timer';
+          let s = mins * 60;
+          let iv = null;
+          const d = el('div', {className:'timer-display'}, formatTime(s));
+          const lb = el('div', {className:'timer-label'}, lbl);
+          let ssb;
+          const rb = el('button', {className:'timer-btn', style:{background:'#ddd',color:'#333',marginLeft:'8px'}, onClick:()=>{clearInterval(iv);iv=null;s=mins*60;d.textContent=formatTime(s);ssb.textContent='▶ Start';ssb.className='timer-btn';}}, '↺ Reset');
+          ssb = el('button', {className:'timer-btn', onClick:()=>{
+            if(iv){clearInterval(iv);iv=null;ssb.textContent='▶ Start';ssb.className='timer-btn';}
+            else{ssb.textContent='⏸ Pause';ssb.className='timer-btn stop';iv=setInterval(()=>{s--;d.textContent=formatTime(s);if(s<=0){clearInterval(iv);iv=null;d.textContent='Done!';ssb.textContent='▶ Start';ssb.className='timer-btn';alert(`⏱️ ${lbl} done!`);}},1000);}
+          }}, '▶ Start');
+          timersPanel.insertBefore(el('div',{className:'timer-box'},lb,d,el('div',{style:{display:'flex',justifyContent:'center',gap:'0',marginTop:'10px'}},ssb,rb)), timersPanel.lastChild);
+        }}, 'Add Timer')
+      )
+    ));
+  }
+  function formatTime(s) { const m=Math.floor(s/60); const sec=s%60; return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
+
+  // SAVED PANEL
+  const savedPanel = el('div', { style: { display:'none', padding:'20px 0', overflowY:'auto', flex:'1' }});
+  function renderSaved() {
+    savedPanel.innerHTML = '';
+    if (!savedRecipes.length) {
+      savedPanel.appendChild(el('div', { style: { textAlign:'center', color:'#888', padding:'40px', fontSize:'0.9rem' }}, '❤️ No saved recipes yet. Ask for a recipe and click Save!'));
+      return;
+    }
+    savedRecipes.forEach((r, i) => {
+      const card = el('div', { className:'saved-card' },
+        el('div', { style:{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px'}},
+          el('span', { style:{fontSize:'0.92rem', fontWeight:'600', color:'#111'}}, r.title),
+          el('span', { style:{fontSize:'0.72rem', color:'#aaa'}}, r.date)
+        ),
+        el('div', { style:{display:'flex', gap:'8px'}},
+          el('button', {
+            style:{background:'#e8a020', border:'none', borderRadius:'6px', padding:'4px 10px', fontSize:'0.72rem', fontWeight:'700', color:'#111', cursor:'pointer'},
+            onClick: () => { currentRecipeText = r.text; switchTab('chat'); chatArea.innerHTML=''; const d=el('div',{style:{background:'#fff',border:'1px solid #e0e0e0',borderRadius:'16px 16px 16px 4px',padding:'14px 18px',fontSize:'0.88rem',lineHeight:'1.8',whiteSpace:'pre-wrap',marginBottom:'20px'}},r.text); chatArea.appendChild(d); saveRecipeBtn.style.display='inline-block'; }
+          }, '📖 View'),
+          el('button', {
+            style:{background:'transparent', border:'1px solid #cc3333', borderRadius:'6px', padding:'4px 10px', fontSize:'0.72rem', color:'#cc3333', cursor:'pointer'},
+            onClick: () => { savedRecipes.splice(i,1); saveFavourites(); renderSaved(); }
+          }, '🗑️ Delete')
+        )
+      );
+      savedPanel.appendChild(card);
+    });
+  }
+
+  // MAIN LAYOUT
+  const panelWrap = el('div', { style: { flex:'1', display:'flex', flexDirection:'column', maxWidth:'900px', margin:'0 auto', width:'100%', padding:'0 16px', overflow:'hidden' }},
+    chatPanel, shoppingPanel, stepsPanel, timersPanel, savedPanel
+  );
+  const app = el('div', { style: { height:'100vh', background:'#f5f5f5', display:'flex', flexDirection:'column', overflow:'hidden' }},
+    header, tabsBar, controls, panelWrap
+  );
   document.getElementById('app').appendChild(app);
 
   async function sendMsg(text) {
     const userText = text || textarea.value.trim();
     if (!userText) return;
     textarea.value = '';
+    if (!started) { started=true; landing.remove(); }
+    switchTab('chat');
 
-    if (!started) {
-      started = true;
-      landing.style.display = 'none';
-      chatArea.style.display = 'block';
-    }
+    chatArea.appendChild(el('div', { className:'fade-in', style:{marginBottom:'20px',display:'flex',gap:'12px',justifyContent:'flex-end'}},
+      el('div', { style:{maxWidth:'82%',background:'#111',color:'#fff',borderRadius:'16px 16px 4px 16px',padding:'14px 18px',fontSize:'0.88rem',lineHeight:'1.8',whiteSpace:'pre-wrap'}}, userText),
+      el('div', { style:{width:'36px',height:'36px',background:'#333',borderRadius:'8px',fontSize:'0.75rem',color:'#fff',fontWeight:'700',flexShrink:'0',marginTop:'2px',lineHeight:'36px',textAlign:'center'}}, 'YOU')
+    ));
 
-    // User message
-    chatArea.appendChild(
-      el('div', { style: { marginBottom:'20px', display:'flex', gap:'12px', justifyContent:'flex-end' }},
-        el('div', { style: { maxWidth:'82%', background:'#111', color:'#fff', borderRadius:'16px 16px 4px 16px', padding:'14px 18px', fontSize:'0.88rem', lineHeight:'1.8', whiteSpace:'pre-wrap' }}, userText),
-        el('div', { style: { width:'36px', height:'36px', background:'#333', borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'0.75rem', color:'#fff', fontWeight:'700', flexShrink:'0', marginTop:'2px', lineHeight:'36px', textAlign:'center' }}, 'YOU')
-      )
+    const dots = [0,1,2].map(i => { const d=el('div',{style:{width:'7px',height:'7px',background:'#e8a020',borderRadius:'50%',animation:'bounce 1.2s infinite',animationDelay:`${i*0.2}s`}}); return d; });
+    const loadMsg = el('div', {style:{display:'flex',gap:'12px',marginBottom:'20px'}},
+      el('div',{style:{width:'36px',height:'36px',background:'#e8a020',borderRadius:'8px',fontSize:'1rem',lineHeight:'36px',textAlign:'center'}},'🍳'),
+      el('div',{style:{background:'#fff',border:'1px solid #e0e0e0',borderRadius:'16px 16px 16px 4px',padding:'14px 20px',display:'flex',gap:'6px',alignItems:'center'}},...dots,
+        el('span',{style:{fontSize:'0.78rem',color:'#888',marginLeft:'6px'}},'Preparing your recipe...'))
     );
-
-    // Loading
-    const loadingDots = el('div', { style: { display:'flex', gap:'6px', alignItems:'center' }},
-      ...[0,1,2].map(i => {
-        const d = el('div', { style: { width:'7px', height:'7px', background:'#e8a020', borderRadius:'50%', animation:'bounce 1.2s infinite', animationDelay:`${i*0.2}s` }});
-        return d;
-      }),
-      el('span', { style: { fontSize:'0.78rem', color:'#888', marginLeft:'6px' }}, 'Preparing your recipe...')
-    );
-    const loadingMsg = el('div', { style: { display:'flex', gap:'12px', marginBottom:'20px' }},
-      el('div', { style: { width:'36px', height:'36px', background:'#e8a020', borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'1rem', flexShrink:'0', lineHeight:'36px', textAlign:'center' }}, '🍳'),
-      el('div', { style: { background:'#fff', border:'1px solid #e0e0e0', borderRadius:'16px 16px 16px 4px', padding:'14px 20px', display:'flex', gap:'6px', alignItems:'center' }}, loadingDots)
-    );
-    chatArea.appendChild(loadingMsg);
+    chatArea.appendChild(loadMsg);
     chatArea.scrollTop = chatArea.scrollHeight;
 
     let prompt = userText + `\n\nCooking for: ${servings} people. Scale ALL ingredients for exactly ${servings} people.`;
     if (diet !== 'None') prompt += `\nDiet: ${diet}.`;
     if (cuisine !== 'All') prompt += `\nCuisine: ${cuisine}.`;
-
-    messages.push({ role: 'user', content: prompt });
+    messages.push({ role:'user', content:prompt });
 
     try {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 2000,
-          system: SYSTEM,
-          messages: messages
-        })
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'x-api-key':apiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+        body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:2000, system:SYSTEM, messages })
       });
       const data = await res.json();
       const reply = data.content?.[0]?.text || 'Sorry, something went wrong.';
-      messages.push({ role: 'assistant', content: reply });
-      chatArea.removeChild(loadingMsg);
-      chatArea.appendChild(
-        el('div', { style: { marginBottom:'20px', display:'flex', gap:'12px' }},
-          el('div', { style: { width:'36px', height:'36px', background:'#e8a020', borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'1rem', flexShrink:'0', marginTop:'2px', lineHeight:'36px', textAlign:'center' }}, '🍳'),
-          el('div', { style: { maxWidth:'82%', background:'#fff', color:'#111', borderRadius:'16px 16px 16px 4px', padding:'14px 18px', fontSize:'0.88rem', lineHeight:'1.8', border:'1px solid #e0e0e0', whiteSpace:'pre-wrap' }}, reply)
-        )
-      );
+      messages.push({ role:'assistant', content:reply });
+      currentRecipeText = reply;
+      shoppingChecked = {}; stepsChecked = {};
+      chatArea.removeChild(loadMsg);
+      chatArea.appendChild(el('div',{className:'fade-in',style:{marginBottom:'20px',display:'flex',gap:'12px'}},
+        el('div',{style:{width:'36px',height:'36px',background:'#e8a020',borderRadius:'8px',fontSize:'1rem',lineHeight:'36px',textAlign:'center',flexShrink:'0',marginTop:'2px'}},'🍳'),
+        el('div',{style:{maxWidth:'82%',background:'#fff',color:'#111',borderRadius:'16px 16px 16px 4px',padding:'14px 18px',fontSize:'0.88rem',lineHeight:'1.8',border:'1px solid #e0e0e0',whiteSpace:'pre-wrap'}},reply)
+      ));
+      saveRecipeBtn.style.display = 'inline-block';
+      saveRecipeBtn.textContent = '❤️ Save Recipe';
     } catch(e) {
-      chatArea.removeChild(loadingMsg);
-      chatArea.appendChild(
-        el('div', { style: { marginBottom:'20px', display:'flex', gap:'12px' }},
-          el('div', { style: { width:'36px', height:'36px', background:'#e8a020', borderRadius:'8px', lineHeight:'36px', textAlign:'center' }}, '🍳'),
-          el('div', { style: { background:'#fff', border:'1px solid #e0e0e0', borderRadius:'16px 16px 16px 4px', padding:'14px 18px', fontSize:'0.88rem', color:'#cc0000' }}, 'Connection error. Please check your API key and try again.')
-        )
-      );
+      chatArea.removeChild(loadMsg);
+      chatArea.appendChild(el('div',{style:{marginBottom:'20px',display:'flex',gap:'12px'}},
+        el('div',{style:{width:'36px',height:'36px',background:'#e8a020',borderRadius:'8px',lineHeight:'36px',textAlign:'center'}},'🍳'),
+        el('div',{style:{background:'#fff',border:'1px solid #e0e0e0',borderRadius:'16px 16px 16px 4px',padding:'14px 18px',fontSize:'0.88rem',color:'#cc0000'}},
+          'Connection error. Please check your API key has credits and try again.')
+      ));
     }
     chatArea.scrollTop = chatArea.scrollHeight;
   }
@@ -291,7 +577,6 @@ function showMainApp() {
   sendBtn.addEventListener('click', () => sendMsg());
 }
 
-// INIT
 const saved = localStorage.getItem('cm_key');
 if (saved) { apiKey = saved; showMainApp(); }
 else { showApiScreen(); }
