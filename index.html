@@ -112,11 +112,11 @@ function App() {
       <div style={{ background:"#1a1a1a", border:"1px solid #333", borderRadius:16, padding:"48px 40px", maxWidth:480, width:"100%", textAlign:"center" }}>
         <div style={{ width:56, height:56, background:"#e8a020", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", fontSize:"1.6rem", margin:"0 auto 20px" }}>🍳</div>
         <h1 style={{ color:"#fff", fontSize:"1.6rem", fontWeight:300, marginBottom:8 }}>CookMaster <span style={{ color:"#e8a020", fontWeight:700 }}>Pro</span></h1>
-        <p style={{ color:"#888", fontSize:"0.9rem", lineHeight:1.7, marginBottom:8 }}>To use CookMaster Pro you need a <strong style={{color:"#fff"}}>free</strong> Google Gemini API key.</p>
+        <p style={{ color:"#888", fontSize:"0.9rem", lineHeight:1.7, marginBottom:8 }}>To use CookMaster Pro you need an Anthropic API key.</p>
         <div style={{ background:"#111", border:"1px solid #333", borderRadius:10, padding:"16px", marginBottom:20, textAlign:"left" }}>
-          <p style={{ color:"#e8a020", fontSize:"0.78rem", fontWeight:700, marginBottom:8 }}>How to get your FREE key (2 minutes):</p>
+          <p style={{ color:"#e8a020", fontSize:"0.78rem", fontWeight:700, marginBottom:8 }}>How to get your key:</p>
           <p style={{ color:"#888", fontSize:"0.78rem", lineHeight:1.8 }}>
-            1. Go to <a href="https://aistudio.google.com" target="_blank" style={{ color:"#e8a020" }}>aistudio.google.com</a><br/>
+            1. Go to <a href="https://console.anthropic.com" target="_blank" style={{ color:"#e8a020" }}>console.anthropic.com</a><br/>
             2. Sign in with Google<br/>
             3. Click <strong style={{color:"#fff"}}>"Get API Key"</strong><br/>
             4. Click <strong style={{color:"#fff"}}>"Create API Key"</strong><br/>
@@ -124,7 +124,7 @@ function App() {
           </p>
         </div>
         <input value={apiKeyInput} onChange={e=>setApiKeyInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveApiKey()}
-          placeholder="Paste your Gemini API key here (AIza...)"
+          placeholder="Paste your API key here (sk-ant-...)"
           style={{ width:"100%", background:"#111", border:"2px solid #333", borderRadius:10, padding:"12px 16px", fontSize:"0.88rem", color:"#fff", outline:"none", marginBottom:12, fontFamily:"monospace", boxSizing:"border-box" }}
           onFocus={e=>e.target.style.borderColor="#e8a020"} onBlur={e=>e.target.style.borderColor="#333"}
         />
@@ -159,17 +159,18 @@ function App() {
     setMessages(newMessages);
     setLoading(true);
     try {
-      const fullPrompt = SYSTEM_PROMPT + "\n\nUser: " + buildPrompt(userText);
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: fullPrompt }] }],
-          generationConfig: { maxOutputTokens: 2000, temperature: 0.7 }
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 2000,
+          system: SYSTEM_PROMPT,
+          messages: [...messages.map(m => ({ role: m.role, content: m.content })), { role: "user", content: buildPrompt(userText) }],
         }),
       });
       const data = await res.json();
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Sorry, something went wrong. Check your API key is valid.";
+      const reply = data.content?.[0]?.text || "Sorry, something went wrong. Check your API key is valid.";
       setMessages([...newMessages, { role: "assistant", content: reply }]);
     } catch {
       setMessages([...newMessages, { role: "assistant", content: "Connection error. Please try again." }]);
